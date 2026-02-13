@@ -214,8 +214,15 @@ hardware_interface::CallbackReturn OpenArm_v10HW::on_activate(
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   openarm_->recv_all();
 
-  // Return to zero position
-  return_to_zero();
+  // Command current position to avoid jump
+  RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"),
+              "Setting current position...");
+  read(rclcpp::Time(), rclcpp::Duration(0, 0));
+  for (size_t i = 0; i < joint_names_.size(); ++i) {
+    pos_commands_[i] = pos_states_[i];
+    vel_commands_[i] = 0.0;
+    tau_commands_[i] = 0.0;
+  }
 
   RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"), "OpenArm V10 activated");
   return CallbackReturn::SUCCESS;
