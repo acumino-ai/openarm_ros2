@@ -67,6 +67,11 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
       const rclcpp_lifecycle::State& previous_state) override;
 
   TEMPLATES__ROS2_CONTROL__VISIBILITY_PUBLIC
+  hardware_interface::return_type perform_command_mode_switch(
+      const std::vector<std::string>& start_interfaces,
+      const std::vector<std::string>& stop_interfaces) override;
+
+  TEMPLATES__ROS2_CONTROL__VISIBILITY_PUBLIC
   hardware_interface::return_type read(const rclcpp::Time& time,
                                        const rclcpp::Duration& period) override;
 
@@ -130,6 +135,10 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
   std::vector<double> pos_states_;
   std::vector<double> vel_states_;
   std::vector<double> tau_states_;
+
+  // Claimed command interface tracking (updated via perform_command_mode_switch)
+  std::vector<bool> pos_interface_claimed_;
+  std::vector<bool> vel_interface_claimed_;
 
   // Helper methods
   void return_to_zero();
