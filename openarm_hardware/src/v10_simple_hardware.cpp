@@ -216,6 +216,12 @@ hardware_interface::CallbackReturn OpenArm_v10HW::on_activate(
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   openarm_->recv_all();
 
+  // Unclaimed commands track state by default
+  std::fill(pos_interface_claimed_.begin(), pos_interface_claimed_.end(),
+            false);
+  std::fill(vel_interface_claimed_.begin(), vel_interface_claimed_.end(),
+            false);
+
   // Command current position to avoid jump
   RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"),
               "Setting current position...");
