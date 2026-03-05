@@ -308,13 +308,13 @@ hardware_interface::return_type OpenArm_v10HW::perform_command_mode_switch(
     const std::string vel_if =
         joint_names_[i] + "/" + hardware_interface::HW_IF_VELOCITY;
 
-    for (const auto& iface : start_interfaces) {
-      if (iface == pos_if) pos_interface_claimed_[i] = true;
-      if (iface == vel_if) vel_interface_claimed_[i] = true;
-    }
     for (const auto& iface : stop_interfaces) {
       if (iface == pos_if) pos_interface_claimed_[i] = false;
       if (iface == vel_if) vel_interface_claimed_[i] = false;
+    }
+    for (const auto& iface : start_interfaces) {
+      if (iface == pos_if) pos_interface_claimed_[i] = true;
+      if (iface == vel_if) vel_interface_claimed_[i] = true;
     }
   }
   return hardware_interface::return_type::OK;
