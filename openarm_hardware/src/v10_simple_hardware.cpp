@@ -290,6 +290,11 @@ hardware_interface::return_type OpenArm_v10HW::write(
   openarm_->get_arm().mit_control_all(arm_params);
   // Control gripper if enabled
   if (hand_ && joint_names_.size() > ARM_DOF) {
+    // Unclaimed commands track state so there is no jump when claimed
+    if (!pos_interface_claimed_[ARM_DOF]) {
+      pos_commands_[ARM_DOF] = pos_states_[ARM_DOF];
+    }
+
     // TODO the true mappings are unimplemented.
     double motor_command = joint_to_motor_radians(pos_commands_[ARM_DOF]);
     openarm_->get_gripper().mit_control_all(
