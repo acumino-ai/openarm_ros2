@@ -138,7 +138,6 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
 
   // Claimed command interface tracking (updated via perform_command_mode_switch)
   std::vector<bool> pos_interface_claimed_;
-  std::vector<bool> vel_interface_claimed_;
 
   // Helper methods
   void return_to_zero();
