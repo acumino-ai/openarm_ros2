@@ -156,6 +156,7 @@ hardware_interface::CallbackReturn OpenArm_v10HW::on_init(
   pos_states_.resize(total_joints, 0.0);
   vel_states_.resize(total_joints, 0.0);
   tau_states_.resize(total_joints, 0.0);
+  pos_interface_claimed_.resize(total_joints, false);
 
   RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"),
               "OpenArm V10 Simple HW initialized successfully");
@@ -213,6 +214,10 @@ hardware_interface::CallbackReturn OpenArm_v10HW::on_activate(
   openarm_->enable_all();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
   openarm_->recv_all();
+
+  // Unclaimed commands track state by default
+  std::fill(pos_interface_claimed_.begin(), pos_interface_claimed_.end(),
+            false);
 
   // Command current position to avoid jump
   RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"),
@@ -279,18 +284,48 @@ hardware_interface::return_type OpenArm_v10HW::write(
   // Control arm motors with MIT control
   std::vector<openarm::damiao_motor::MITParam> arm_params;
   for (size_t i = 0; i < ARM_DOF; ++i) {
+    // Unclaimed position commands track state
+    if (!pos_interface_claimed_[i]) pos_commands_[i] = pos_states_[i];
     arm_params.push_back(
         {kp_[i], kd_[i], pos_commands_[i], vel_commands_[i], tau_commands_[i]});
   }
   openarm_->get_arm().mit_control_all(arm_params);
   // Control gripper if enabled
   if (hand_ && joint_names_.size() > ARM_DOF) {
+    // Unclaimed commands track state so there is no jump when claimed
+    if (!pos_interface_claimed_[ARM_DOF]) {
+      pos_commands_[ARM_DOF] = pos_states_[ARM_DOF];
+    }
+
     // TODO the true mappings are unimplemented.
     double motor_command = joint_to_motor_radians(pos_commands_[ARM_DOF]);
     openarm_->get_gripper().mit_control_all(
         {{GRIPPER_KP, GRIPPER_KD, motor_command, 0, 0}});
   }
   openarm_->recv_all(1000);
+  return hardware_interface::return_type::OK;
+}
+
+hardware_interface::return_type OpenArm_v10HW::perform_command_mode_switch(
+    const std::vector<std::string>& start_interfaces,
+    const std::vector<std::string>& stop_interfaces) {
+  for (size_t i = 0; i < joint_names_.size(); ++i) {
+    const std::string pos_if =
+        joint_names_[i] + "/" + hardware_interface::HW_IF_POSITION;
+    const std::string vel_if =
+        joint_names_[i] + "/" + hardware_interface::HW_IF_VELOCITY;
+    const std::string eff_if =
+        joint_names_[i] + "/" + hardware_interface::HW_IF_EFFORT;
+
+    for (const auto& iface : stop_interfaces) {
+      if (iface == pos_if) pos_interface_claimed_[i] = false;
+      if (iface == vel_if) vel_commands_[i] = 0.0;
+      if (iface == eff_if) tau_commands_[i] = 0.0;
+    }
+    for (const auto& iface : start_interfaces) {
+      if (iface == pos_if) pos_interface_claimed_[i] = true;
+    }
+  }
   return hardware_interface::return_type::OK;
 }
 
