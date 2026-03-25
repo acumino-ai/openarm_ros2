@@ -77,17 +77,14 @@ bool OpenArm_v10HW::parse_config(const hardware_interface::HardwareInfo& info) {
     hand_ = false;
   }
 
-  // Set runtime arm joint count
-  num_arm_joints_ = ARM_DOF + (dof8_ ? 1 : 0);
-
-  // Extend gains for 8th arm joint
-  if (dof8_) {
-    kp_.push_back(10.0);  // Default for DM4310
-    kd_.push_back(0.5);
+  // Set gains for 8th motor (hand uses gripper gains, dof8 uses arm gains)
+  if (hand_ || dof8_) {
+    kp_.push_back(hand_ ? GRIPPER_KP : 10.0);
+    kd_.push_back(hand_ ? GRIPPER_KD : 0.5);
   }
 
-  // Parse control gains
-  for (size_t i = 1; i <= num_arm_joints_; ++i) {
+  // Parse control gains (overridable via kp1..kp8, kd1..kd8 params)
+  for (size_t i = 1; i <= kp_.size(); ++i) {
     it = info.hardware_parameters.find("kp" + std::to_string(i));
     if (it != info.hardware_parameters.end()) {
       kp_[i - 1] = std::stod(it->second);
@@ -112,19 +109,16 @@ void OpenArm_v10HW::generate_joint_names() {
   // TODO: read from urdf properly and sort in the future.
   // Currently, the joint names are hardcoded for order consistency to align
   // with hardware. Generate arm joint names: openarm_{arm_prefix}joint{N}
-  for (size_t i = 1; i <= num_arm_joints_; ++i) {
-    joint_names_.push_back(
-        "openarm_" + arm_prefix_ + "joint" + std::to_string(i));
+  for (size_t i = 1; i <= ARM_DOF; ++i) {
+    joint_names_.push_back("openarm_" + arm_prefix_ + "joint" +
+                           std::to_string(i));
   }
-
-  // Generate gripper joint name if enabled
-  if (hand_) {
-    std::string gripper_joint_name = "openarm_" + arm_prefix_ + "finger_joint1";
-    joint_names_.push_back(gripper_joint_name);
-    RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"), "Added gripper joint: %s",
-                gripper_joint_name.c_str());
+  // 8th motor: revolute joint in dof8 mode, gripper in hand mode
+  if (dof8_) {
+    joint_names_.push_back("openarm_" + arm_prefix_ + "joint8");
+  } else if (hand_) {
+    joint_names_.push_back("openarm_" + arm_prefix_ + "finger_joint1");
   }
-
   RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"),
               "Generated %zu joint names for arm prefix '%s'",
               joint_names_.size(), arm_prefix_.c_str());
@@ -145,7 +139,7 @@ hardware_interface::CallbackReturn OpenArm_v10HW::on_init(
   generate_joint_names();
 
   // Validate joint count
-  size_t expected_joints = num_arm_joints_ + (hand_ ? 1 : 0);
+  size_t expected_joints = ARM_DOF + ((hand_ || dof8_) ? 1 : 0);
   if (joint_names_.size() != expected_joints) {
     RCLCPP_ERROR(rclcpp::get_logger("OpenArm_v10HW"),
                  "Generated %zu joint names, expected %zu", joint_names_.size(),
@@ -288,26 +282,28 @@ hardware_interface::return_type OpenArm_v10HW::read(
   openarm_->refresh_all();
   openarm_->recv_all();
 
-  // Read arm joint states (7 or 8 depending on dof8 mode)
+  // Read arm motor states
   const auto& arm_motors = openarm_->get_arm().get_motors();
-  for (size_t i = 0; i < num_arm_joints_ && i < arm_motors.size(); ++i) {
+  for (size_t i = 0; i < ARM_DOF && i < arm_motors.size(); ++i) {
     pos_states_[i] = arm_motors[i].get_position();
     vel_states_[i] = arm_motors[i].get_velocity();
     tau_states_[i] = arm_motors[i].get_torque();
   }
 
-  // Read gripper state if enabled
-  if (hand_ && joint_names_.size() > num_arm_joints_) {
+  // Read 8th motor: from arm group (dof8) or gripper group (hand)
+  if (dof8_) {
+    if (arm_motors.size() > ARM_DOF) {
+      pos_states_[ARM_DOF] = arm_motors[ARM_DOF].get_position();
+      vel_states_[ARM_DOF] = arm_motors[ARM_DOF].get_velocity();
+      tau_states_[ARM_DOF] = arm_motors[ARM_DOF].get_torque();
+    }
+  } else if (hand_) {
     const auto& gripper_motors = openarm_->get_gripper().get_motors();
     if (!gripper_motors.empty()) {
-      // TODO the mappings are approximates
-      // Convert motor position (radians) to joint value (0-0.044m)
-      double motor_pos = gripper_motors[0].get_position();
-      pos_states_[num_arm_joints_] = motor_radians_to_joint(motor_pos);
-
-      // Unimplemented: Velocity and torque mapping
-      vel_states_[num_arm_joints_] = 0;  // gripper_motors[0].get_velocity();
-      tau_states_[num_arm_joints_] = 0;  // gripper_motors[0].get_torque();
+      pos_states_[ARM_DOF] =
+          motor_radians_to_joint(gripper_motors[0].get_position());
+      vel_states_[ARM_DOF] = 0;  // TODO: linear velocity mapping
+      tau_states_[ARM_DOF] = 0;  // TODO: force mapping
     }
   }
 
@@ -316,28 +312,27 @@ hardware_interface::return_type OpenArm_v10HW::read(
 
 hardware_interface::return_type OpenArm_v10HW::write(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/) {
-  // Control arm motors with MIT control (7 or 8 depending on dof8 mode)
+  // Build arm MIT params (7 joints, or 8 in dof8 mode)
+  const size_t arm_count = ARM_DOF + (dof8_ ? 1 : 0);
   std::vector<openarm::damiao_motor::MITParam> arm_params;
-  for (size_t i = 0; i < num_arm_joints_; ++i) {
+  for (size_t i = 0; i < arm_count; ++i) {
     // Unclaimed position commands track state
     if (!pos_interface_claimed_[i]) pos_commands_[i] = pos_states_[i];
     arm_params.push_back(
         {kp_[i], kd_[i], pos_commands_[i], vel_commands_[i], tau_commands_[i]});
   }
   openarm_->get_arm().mit_control_all(arm_params);
-  // Control gripper if enabled
-  if (hand_ && joint_names_.size() > num_arm_joints_) {
-    // Unclaimed commands track state so there is no jump when claimed
-    if (!pos_interface_claimed_[num_arm_joints_]) {
-      pos_commands_[num_arm_joints_] = pos_states_[num_arm_joints_];
-    }
 
-    // TODO the true mappings are unimplemented.
-    double motor_command =
-        joint_to_motor_radians(pos_commands_[num_arm_joints_]);
+  // Control gripper if enabled
+  if (hand_) {
+    // Unclaimed commands track state so there is no jump when claimed
+    if (!pos_interface_claimed_[ARM_DOF])
+      pos_commands_[ARM_DOF] = pos_states_[ARM_DOF];
     openarm_->get_gripper().mit_control_all(
-        {{GRIPPER_KP, GRIPPER_KD, motor_command, 0, 0}});
+        {{kp_[ARM_DOF], kd_[ARM_DOF],
+          joint_to_motor_radians(pos_commands_[ARM_DOF]), 0, 0}});
   }
+
   openarm_->recv_all(1000);
   return hardware_interface::return_type::OK;
 }
@@ -365,38 +360,15 @@ hardware_interface::return_type OpenArm_v10HW::perform_command_mode_switch(
   return hardware_interface::return_type::OK;
 }
 
-void OpenArm_v10HW::return_to_zero() {
-  RCLCPP_INFO(rclcpp::get_logger("OpenArm_v10HW"),
-              "Returning to zero position...");
-
-  // Return arm to zero with MIT control
-  std::vector<openarm::damiao_motor::MITParam> arm_params;
-  for (size_t i = 0; i < num_arm_joints_; ++i) {
-    arm_params.push_back({kp_[i], kd_[i], 0.0, 0.0, 0.0});
-  }
-  openarm_->get_arm().mit_control_all(arm_params);
-
-  // Return gripper to zero if enabled
-  if (hand_) {
-    openarm_->get_gripper().mit_control_all(
-        {{GRIPPER_KP, GRIPPER_KD, GRIPPER_JOINT_0_POSITION, 0.0, 0.0}});
-  }
-  std::this_thread::sleep_for(std::chrono::microseconds(1000));
-  openarm_->recv_all();
-}
-
 // Gripper mapping helper functions
 double OpenArm_v10HW::joint_to_motor_radians(double joint_value) {
   // Joint 0=closed -> motor 0 rad, Joint 0.044=open -> motor -1.0472 rad
-  return (joint_value / GRIPPER_JOINT_0_POSITION) *
-         GRIPPER_MOTOR_1_RADIANS;  // Scale from 0-0.044 to 0 to -1.0472
+  return (joint_value / GRIPPER_OPEN_METERS) * GRIPPER_OPEN_RADIANS;
 }
 
 double OpenArm_v10HW::motor_radians_to_joint(double motor_radians) {
   // Motor 0 rad=closed -> joint 0, Motor -1.0472 rad=open -> joint 0.044
-  return GRIPPER_JOINT_0_POSITION *
-         (motor_radians /
-          GRIPPER_MOTOR_1_RADIANS);  // Scale from 0 to -1.0472 to 0-0.044
+  return GRIPPER_OPEN_METERS * (motor_radians / GRIPPER_OPEN_RADIANS);
 }
 
 }  // namespace openarm_hardware

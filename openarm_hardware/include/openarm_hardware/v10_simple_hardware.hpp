@@ -108,10 +108,8 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
   std::vector<double> kp_ = {70.0, 70.0, 70.0, 60.0, 10.0, 10.0, 10.0};
   std::vector<double> kd_ = {2.75, 2.5, 2.0, 2.0, 0.7, 0.6, 0.5};
 
-  const double GRIPPER_JOINT_0_POSITION = 0.044;
-  const double GRIPPER_JOINT_1_POSITION = 0.0;
-  const double GRIPPER_MOTOR_0_RADIANS = 0.0;
-  const double GRIPPER_MOTOR_1_RADIANS = -1.0472;
+  const double GRIPPER_OPEN_METERS = 0.044;
+  const double GRIPPER_OPEN_RADIANS = -1.0472;
   const double GRIPPER_KP = 5.0;
   const double GRIPPER_KD = 0.1;
 
@@ -121,9 +119,6 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
   bool hand_;
   bool dof8_;  // Use 8th motor as revolute joint instead of gripper
   bool can_fd_;
-
-  // Actual number of arm joints (7 base, 8 in dof8 mode)
-  size_t num_arm_joints_ = ARM_DOF;
 
   // OpenArm instance
   std::unique_ptr<openarm::can::socket::OpenArm> openarm_;
@@ -144,7 +139,6 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
   std::vector<bool> pos_interface_claimed_;
 
   // Helper methods
-  void return_to_zero();
   bool parse_config(const hardware_interface::HardwareInfo& info);
   void generate_joint_names();
 
