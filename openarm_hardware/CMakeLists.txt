@@ -61,6 +61,10 @@ install(DIRECTORY include/
 DESTINATION include
 )
 
+install(DIRECTORY urdf
+DESTINATION share/${PROJECT_NAME}
+)
+
 ament_export_include_directories(
   include
 )
