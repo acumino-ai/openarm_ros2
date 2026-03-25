@@ -82,7 +82,6 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
  private:
   // V10 default configuration
   static constexpr size_t ARM_DOF = 7;
-  static constexpr bool ENABLE_GRIPPER = true;
 
   // Default motor configuration for V10
   const std::vector<openarm::damiao_motor::MotorType> DEFAULT_MOTOR_TYPES = {
@@ -120,7 +119,11 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
   std::string can_interface_;
   std::string arm_prefix_;
   bool hand_;
+  bool dof8_;  // Use 8th motor as revolute joint instead of gripper
   bool can_fd_;
+
+  // Actual number of arm joints (7 base, 8 in dof8 mode)
+  size_t num_arm_joints_ = ARM_DOF;
 
   // OpenArm instance
   std::unique_ptr<openarm::can::socket::OpenArm> openarm_;
@@ -136,7 +139,8 @@ class OpenArm_v10HW : public hardware_interface::SystemInterface {
   std::vector<double> vel_states_;
   std::vector<double> tau_states_;
 
-  // Claimed command interface tracking (updated via perform_command_mode_switch)
+  // Claimed command interface tracking (updated via
+  // perform_command_mode_switch)
   std::vector<bool> pos_interface_claimed_;
 
   // Helper methods
